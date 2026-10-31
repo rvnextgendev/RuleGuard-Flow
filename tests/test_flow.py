@@ -58,13 +58,13 @@ def test_llm_receives_full_context(client, monkeypatch):
     import sys, types
     prompts=[]
     module=types.ModuleType('llm')
-    module.explain=lambda prompt: prompts.append(prompt) or 'Advisory explanation'
+    module.explain=lambda prompt: prompts.append(prompt) or '{"summary":"Advisory explanation","changes":[]}'
     monkeypatch.setitem(sys.modules,'llm',module)
     sample=client.get('/api/samples').json()[2]
     response=client.post('/api/runs',json={**{k:sample[k] for k in ('filename','before','after')},'use_ai':True,'business_context':'Removal must occur seven days after term start.'})
     result=client.get('/api/runs/'+response.json()['id']).json()
     import json
-    context=json.loads(prompts[0].split('\n',1)[1])
+    context=json.loads(prompts[0].split('SOURCE DATA:\n',1)[1])
     assert context['before']==sample['before']
     assert context['after']==sample['after']
     assert 'seven days' in context['business_context']
@@ -169,3 +169,44 @@ def test_db_failure_restores_rule_files(client,monkeypatch):
         approve(client,result,['TERM-REMOVAL'])
     assert not (main.RULE_ROOT/'approved/TERM-REMOVAL.md').exists()
     assert main.get(result['id'])['status']=='awaiting_review'
+
+def test_arbitrary_uploaded_sql_compared_by_llm(client, monkeypatch):
+    import sys, types, json
+    before='SELECT * FROM Orders WHERE Total > 500;'
+    after='SELECT * FROM Orders WHERE Total > 1000;'
+    module=types.ModuleType('llm')
+    captured=[]
+    def compare(prompt):
+        captured.append(prompt)
+        return json.dumps({'summary':'Threshold raised from 500 to 1000; test the boundary.', 'changes':[{'kind':'modified','title':'Order threshold','description':'Orders must now exceed 1000 rather than 500.','before_evidence':'Total > 500','after_evidence':'Total > 1000'}]})
+    module.explain=compare
+    monkeypatch.setitem(sys.modules,'llm',module)
+    response=client.post('/api/runs',json={'filename':'UploadedOrders.sql','before':before,'after':after,'use_ai':True})
+    result=client.get('/api/runs/'+response.json()['id']).json()
+    output=result['nodes'][2]['output']
+    assert output['changes']==[]
+    assert output['ai_changes'][0]['before_evidence']=='Total > 500'
+    assert output['ai_changes'][0]['after_line']==1
+    assert output['ai_comparison_status']=='llm-advisory'
+    assert before in captured[0] and after in captured[0]
+    assert 'Threshold raised' in result['nodes'][3]['output']['explanation']
+    assert result['rule_proposals']==[]  # Advisory findings never silently become approved rules.
+
+def test_ai_comparison_rejects_invented_and_unchanged_evidence():
+    import json
+    from backend.ai_compare import validate
+    raw=json.dumps({'summary':'Review required', 'changes':[
+        {'kind':'modified','title':'Invented','description':'x','before_evidence':'Total > 1','after_evidence':'Total > 2'},
+        {'kind':'modified','title':'Unchanged','description':'x','before_evidence':'SELECT','after_evidence':'FROM'}]})
+    result=validate(raw,'SELECT * FROM Orders WHERE Total > 500','SELECT * FROM Orders WHERE Total > 1000')
+    assert not result['changes']
+    assert result['rejected_findings']==2
+
+def test_invalid_llm_response_is_not_reported_as_success(client,monkeypatch):
+    import sys,types
+    module=types.ModuleType('llm');module.explain=lambda _: 'Unstructured answer'
+    monkeypatch.setitem(sys.modules,'llm',module)
+    response=client.post('/api/runs',json={'filename':'x.sql','before':'SELECT 1','after':'SELECT 2','use_ai':True})
+    result=client.get('/api/runs/'+response.json()['id']).json()
+    assert result['nodes'][2]['output']['warning']
+    assert result['nodes'][2]['output']['ai_comparison_status']=='deterministic'

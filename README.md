@@ -156,3 +156,12 @@ For the 8 → 7 day sample, select `TERM-REMOVAL` and open `rules/approved/TERM-
 Markdown includes reviewer, comments, timestamp, source evidence, run ID and previous content hash. SQLite retains the decision, selected IDs, saved paths and new hashes. The Docker bind mount is writable; files survive container replacement. No GitHub commit/PR is created automatically. Commit approved/archived files yourself to share them.
 
 This remains a single-worker local POC. The in-process lock coordinates Flow decisions, not external editors or Classic Streamlit. Avoid simultaneous manual/Classic writes during approval. File and SQLite updates are not a crash-atomic distributed transaction; abrupt process/machine failure during a save needs inspection of the saved files and run history. New rule IDs are documented but only the inherited PAY patterns are enforced by the existing Git guard.
+
+
+## Uploaded source comparison (UI 1.4)
+
+Upload the original file on the left and its changed version on the right. The interface displays uploaded filenames and character counts. Enable **Compare both sources with LLM**, then run analysis. The Compare Rules step sends both versions and context to the configured model and requests structured added/removed/modified behavior findings. Explain Impact displays the returned summary without a second model request.
+
+The **Source comparison** panel shows before/after evidence and source line numbers for accepted advisory findings. The server rejects findings with missing, invented, unchanged, or incorrectly paired evidence. Evidence matching cannot establish semantic correctness: manually review the interpretations. Invalid JSON, provider failures or rate limits produce a visible warning and preserve the baseline results and text diff. No live provider success is implied by fallback output.
+
+The existing 12,000-character limit per source remains. Larger files show a partial-comparison warning; split a large procedure or review the full text diff. The raw text diff always compares all submitted text. LLM findings are advisory and do not generate approved Markdown proposals; only the existing baseline proposals support file approval in this version. Generic AI-to-rule promotion remains a separate extension.

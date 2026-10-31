@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'app'))
 load_dotenv(ROOT / '.env')
 from engine import RULES
-from backend import rule_store
+from backend import rule_store, ai_compare
 
 app = FastAPI(title='RuleGuard Flow', version='1.0.0')
 DB = Path(os.getenv('FLOW_DB', str(ROOT / 'data/flow.sqlite3')))
@@ -115,7 +115,7 @@ def execute(run_id):
         event(run, index, 'completed', STEPS[index] + ' completed')
         if index + 1 < 4:
             run['nodes'][index + 1]['status'] = 'running'
-            event(run, index + 1, 'running', ['Reading submitted source', 'Finding baseline rules and source evidence', 'Comparing original and changed rules', 'Calling configured LLM' if run['input']['use_ai'] else 'Generating deterministic impact summary'][index + 1])
+            event(run, index + 1, 'running', ['Reading submitted source', 'Finding baseline rules and source evidence', 'Comparing original and changed rules', 'Preparing comparison summary'][index + 1])
         save(run)
     try:
         source = run['input']
@@ -137,21 +137,31 @@ def execute(run_id):
                 continue
             changes.append({'id': rid, 'kind': kind, 'before': old.get(rid), 'after': new.get(rid)})
         diff = '\n'.join(difflib.unified_diff(source['before'].splitlines(), source['after'].splitlines(), fromfile='before/' + source['filename'], tofile='after/' + source['filename'], lineterm=''))
-        with lock:
-            run['rule_proposals'] = rule_store.proposals(RULE_ROOT, run, changes)
-        step(2, {'changes': changes, 'diff': diff, 'code_changed': source['before'] != source['after']})
         explanation = f'{len(changes)} baseline rule change(s) detected. Review the source diff and validate behavior with tests. Pattern matching is not semantic proof.'
         mode = 'deterministic'
         warning = None
         context_metadata = None
+        ai_result = None
         if source['use_ai']:
+            event(run, 2, 'running', 'Comparing both source versions with ' + os.getenv('LLM_PROVIDER', 'ollama'))
+            save(run)
             try:
                 from llm import explain
                 prompt, context_metadata = llm_context(source, changes, diff)
-                explanation = explain(prompt)
+                raw = explain(ai_compare.INSTRUCTIONS + '\nSOURCE DATA:\n' + prompt.split('\n', 1)[1])
+                ai_result = ai_compare.validate(raw, source['before'][:12000], source['after'][:12000])
+                explanation = ai_result['summary']
                 mode = 'llm-advisory'
+                if ai_result['rejected_findings']:
+                    warning = f"{ai_result['rejected_findings']} LLM finding(s) omitted because their evidence or schema could not be validated."
             except Exception as exc:
-                warning = f'AI unavailable ({type(exc).__name__}); deterministic results retained. Check server configuration.'
+                warning = f'LLM comparison unavailable or invalid ({type(exc).__name__}); only baseline checks and text diff are available. Check provider configuration, quota and response format.'
+        with lock:
+            run['rule_proposals'] = rule_store.proposals(RULE_ROOT, run, changes)
+        step(2, {'changes': changes, 'ai_changes': ai_result['changes'] if ai_result else [],
+                 'ai_comparison_status': mode if source['use_ai'] else 'not_requested',
+                 'warning': warning, 'diff': diff, 'code_changed': source['before'] != source['after'],
+                 'scope': 'Baseline changes can be saved as rules. LLM comparisons are evidence-checked advisory findings and are not automatically saved as rule files.'})
         step(3, {'explanation': explanation, 'mode': mode, 'warning': warning, 'provider': os.getenv('LLM_PROVIDER', 'ollama') if source['use_ai'] else None, 'context': context_metadata})
         run['status'] = 'awaiting_review'
         run['nodes'][4]['status'] = 'awaiting_review'
