@@ -1,0 +1,11 @@
+.env
+__pycache__/
+.pytest_cache/
+ruleguard-report.json
+
+node_modules/
+frontend/dist/
+.angular/
+data/
+.venv/
+.pytest_cache/

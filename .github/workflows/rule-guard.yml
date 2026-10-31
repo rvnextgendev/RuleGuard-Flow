@@ -1,0 +1,51 @@
+name: RuleGuard Business Approval
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_approval: ${{ steps.check.outputs.needs_approval }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Evaluate approved business rules
+        id: check
+        shell: bash
+        run: |
+          PYTHONPATH=app python -m approval ruleguard-report.json
+          echo "needs_approval=$(python -c 'import json; print(str(json.load(open("ruleguard-report.json"))["review_required"]).lower())')" >> "$GITHUB_OUTPUT"
+          cat ruleguard-report.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ruleguard-report
+          path: ruleguard-report.json
+  owner-approval:
+    needs: detect
+    if: needs.detect.outputs.needs_approval == 'true'
+    runs-on: ubuntu-latest
+    environment: business-rule-exception
+    steps:
+      - run: echo 'Authorized environment reviewer approved this specific workflow run.'
+  merge-gate:
+    if: always()
+    needs: [detect, owner-approval]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful detection and applicable approval
+        env:
+          DETECT: ${{ needs.detect.result }}
+          NEEDS_APPROVAL: ${{ needs.detect.outputs.needs_approval }}
+          APPROVAL: ${{ needs.owner-approval.result }}
+        run: |
+          test "$DETECT" = success || exit 1
+          if [ "$NEEDS_APPROVAL" = true ]; then
+            test "$APPROVAL" = success || exit 1
+          fi
+          echo 'RuleGuard merge gate passed.'

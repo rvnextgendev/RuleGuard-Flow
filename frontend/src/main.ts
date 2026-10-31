@@ -1,0 +1,41 @@
+import 'zone.js';
+import {Component, OnDestroy, OnInit} from '@angular/core';
+import {bootstrapApplication} from '@angular/platform-browser';
+import {CommonModule} from '@angular/common';
+
+@Component({selector:'app-root',standalone:true,imports:[CommonModule],template:`
+<header><div class="brand"><b class="logo">R</b><span>RuleGuard <strong>Flow</strong><small>BUSINESS RULE INTELLIGENCE</small></span></div><span class="tag">LOCAL POC</span><a href="http://localhost:8501" target="_blank" rel="noopener">Classic Streamlit ↗</a></header>
+<main><aside><div class="eyebrow">WORKSPACE</div><h2>Change review</h2><p>Trace a code change.<br>Understand its impact.</p><button class="nav" (click)="view='workflow'">◈ Workflow canvas</button><button class="nav" (click)="showHistory()">◷ Execution history</button><div class="aside-note">Human decisions matter.<br><small>POC decisions are recorded locally. GitHub environment approval remains separate.</small></div></aside>
+<section class="workspace"><div class="toolbar"><div><div class="eyebrow">RULEGUARD / {{view === 'workflow' ? 'WORKFLOW' : 'HISTORY'}}</div><h1>{{view === 'workflow' ? 'From code to confidence' : 'Execution history'}}</h1></div><button class="primary" [disabled]="busy" (click)="start()">{{busy ? '● Running…' : '▶ Run analysis'}}</button></div>
+<div class="error" role="alert" *ngIf="error">{{error}}</div>
+<ng-container *ngIf="view==='workflow'">
+<div class="inputbar"><label>Scenario <select (change)="choose($event)"><option *ngFor="let s of samples; index as i" [value]="i">{{s.name}}</option></select></label><label>Filename <input [value]="filename" (input)="filename=value($event)"></label><label class="check"><input type="checkbox" [checked]="ai" (change)="ai=!ai"> Ask configured LLM</label><button (click)="editing=!editing">{{editing ? 'Hide code' : 'Edit / upload code'}}</button></div>
+<div class="editors" *ngIf="editing"><label>Original source<input type="file" accept=".cs,.sql" (change)="upload($event,'before')"><textarea [value]="before" (input)="before=value($event)"></textarea></label><label>Changed source<input type="file" accept=".cs,.sql" (change)="upload($event,'after')"><textarea [value]="after" (input)="after=value($event)"></textarea></label></div>
+<div class="runbar"><span class="dot"></span>{{run ? run.status.replaceAll('_',' ') : 'Ready to execute'}}<small>{{run ? run.id : 'Select a sample or supply your own C# / SQL'}}</small></div>
+<div class="canvas"><div class="canvas-label">BUSINESS RULE REVIEW PIPELINE <span>Click a node to inspect its evidence</span></div><div class="pipeline"><ng-container *ngFor="let n of nodes; index as i"><button class="node" [class.active]="selected===i" [attr.data-status]="n.status" (click)="selected=i"><span class="node-icon">{{icons[i]}}</span><small>STEP 0{{i+1}}</small><strong>{{n.name}}</strong><span class="state">{{n.status.replaceAll('_',' ')}}</span></button><span class="connector" *ngIf="i<5">→</span></ng-container></div><div class="canvas-foot">C# + SQL <span>Evidence first · Human review · Traceable decisions</span></div></div>
+<div class="details"><div><div class="eyebrow">NODE INSPECTOR</div><h2>{{nodes[selected].name}}</h2><p>Inputs and outputs from this execution.</p></div><pre>{{nodes[selected].output === null ? 'Run analysis to see this step’s output.' : pretty(nodes[selected].output)}}</pre></div>
+<div class="review" *ngIf="run?.status==='awaiting_review'"><div><div class="eyebrow">REVIEW REQUIRED</div><h2>Record your decision</h2><p>Check all node outputs and the source diff first.</p></div><input placeholder="Reviewer name" [value]="reviewer" (input)="reviewer=value($event)"><textarea placeholder="Decision reason and verification performed" [value]="comments" (input)="comments=value($event)"></textarea><button [disabled]="deciding" (click)="decision('rejected')">Reject</button><button class="primary" [disabled]="deciding" (click)="decision('approved')">Approve</button></div>
+</ng-container>
+<div class="history" *ngIf="view==='history'"><button *ngFor="let r of history" (click)="openRun(r.id)"><strong>{{r.filename}}</strong><span>{{r.status}}</span><small>{{r.created_at}}</small></button><p *ngIf="!history.length">No executions yet. Run your first analysis.</p></div>
+<footer>Baseline checks cover four inherited payment patterns and the removal-day assignment. AI results are advisory.</footer></section></main>`})
+class App implements OnInit,OnDestroy {
+ samples:any[]=[]; history:any[]=[]; run:any=null; selected=0; view='workflow'; error=''; busy=false; deciding=false; editing=false; ai=false; before=''; after=''; filename='PaymentService.cs'; reviewer=''; comments=''; timer:any;
+ icons=['⌘','⌕','⇄','✦','◎','✓'];
+ empty=['Load Code','Extract Rules','Compare Rules','Explain Impact','Business Review','Save Decision'].map((name,id)=>({name,id,status:'pending',output:null}));
+ get nodes(){return this.run?.nodes || this.empty;}
+ async api(path:string,method='GET',body?:any){const r=await fetch('/api'+path,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});if(!r.ok){const e=await r.json();throw Error(typeof e.detail==='string'?e.detail:JSON.stringify(e.detail));}return r.json();}
+ async ngOnInit(){try{this.samples=await this.api('/samples');this.loadSample(0);}catch(e){this.fail(e);}}
+ ngOnDestroy(){clearTimeout(this.timer);}
+ value(e:Event){return (e.target as HTMLInputElement).value;}
+ pretty(v:any){return typeof v==='string'?v:JSON.stringify(v,null,2);}
+ choose(e:Event){this.loadSample(Number(this.value(e)));}
+ loadSample(i:number){const s=this.samples[i];this.before=s.before;this.after=s.after;this.filename=s.filename;}
+ async upload(e:Event,side:'before'|'after'){const f=(e.target as HTMLInputElement).files?.[0];if(!f)return;if(f.size>100000){this.error='Use files under 100 KB.';return;}this[side]=await f.text();this.filename=f.name;}
+ fail(e:any){this.error=e.message || String(e);}
+ async start(){this.error='';this.busy=true;this.view='workflow';clearTimeout(this.timer);try{this.run=await this.api('/runs','POST',{filename:this.filename,before:this.before,after:this.after,use_ai:this.ai});this.selected=0;await this.poll();}catch(e){this.busy=false;this.fail(e);}}
+ async poll(){try{this.run=await this.api('/runs/'+this.run.id);this.busy=this.run.status==='running';if(this.busy)this.timer=setTimeout(()=>this.poll(),750);else this.selected=this.run.status==='failed'?this.nodes.findIndex((n:any)=>n.status==='failed'):2;}catch(e){this.busy=false;this.fail(e);}}
+ async decision(decision:string){this.deciding=true;this.error='';try{this.run=await this.api('/runs/'+this.run.id+'/decision','POST',{decision,reviewer:this.reviewer,comments:this.comments});this.selected=5;}catch(e){this.fail(e);}finally{this.deciding=false;}}
+ async showHistory(){try{this.history=await this.api('/runs');this.view='history';}catch(e){this.fail(e);}}
+ async openRun(id:string){try{clearTimeout(this.timer);this.run=await this.api('/runs/'+id);this.before=this.run.input.before;this.after=this.run.input.after;this.filename=this.run.input.filename;this.view='workflow';this.selected=2;await this.poll();}catch(e){this.fail(e);}}
+}
+bootstrapApplication(App).catch(console.error);
