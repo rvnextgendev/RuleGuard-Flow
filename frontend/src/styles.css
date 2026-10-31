@@ -4,3 +4,5 @@
 .context-label{display:flex;flex-direction:column;gap:8px;margin-top:20px;color:#a8b5c9;font-size:12px}.context-label textarea{min-height:90px;resize:vertical}
 
 .execution-log{margin-top:22px;padding:20px;border:1px solid #2d3950;border-radius:12px;background:#111825;max-height:240px;overflow:auto}.execution-log>div:not(.eyebrow){display:flex;gap:15px;padding-top:12px;font-size:12px}.execution-log time{color:#7e92b0}.execution-log strong{color:#84edcb;min-width:105px}.execution-log span{color:#a8b8cc}.connector.flowing{color:#84edcb;animation:travel .7s infinite alternate}@keyframes travel{to{transform:translateX(4px);text-shadow:0 0 10px #84edcb}}
+
+.rule-proposals{width:100%}.rule-proposals article{border:1px solid #405370;border-radius:8px;padding:16px;margin:12px 0}.rule-proposals details{padding-top:12px}.rule-proposals summary{cursor:pointer;color:#84edcb}.rule-proposals pre{margin-top:12px}

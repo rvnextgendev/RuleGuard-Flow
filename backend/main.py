@@ -20,9 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'app'))
 load_dotenv(ROOT / '.env')
 from engine import RULES
+from backend import rule_store
 
 app = FastAPI(title='RuleGuard Flow', version='1.0.0')
 DB = Path(os.getenv('FLOW_DB', str(ROOT / 'data/flow.sqlite3')))
+RULE_ROOT = ROOT / 'rules'
 lock = Lock()
 STEPS = ['Load Code', 'Extract Rules', 'Compare Rules', 'Explain Impact', 'Business Review', 'Save Decision']
 
@@ -59,6 +61,7 @@ class Decision(BaseModel):
     decision: Literal['approved', 'rejected']
     reviewer: str = Field(min_length=1, max_length=120)
     comments: str = Field(min_length=1, max_length=2000)
+    selected_rule_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 def extract(code, filename):
@@ -83,7 +86,7 @@ def llm_context(source, changes, diff):
     limits = {'before': 12000, 'after': 12000, 'business_context': 6000,
               'approved_rules': 8000, 'changes': 6000, 'diff': 8000}
     approved = '\n\n'.join(f'FILE: {p.name}\n{p.read_text(encoding="utf-8")}'
-                            for p in sorted((ROOT / 'rules/approved').glob('*.md')))
+                            for p in sorted((RULE_ROOT / 'approved').glob('*.md')))
     raw = {'before': source['before'], 'after': source['after'],
            'business_context': source.get('business_context', ''),
            'approved_rules': approved, 'changes': json.dumps(changes), 'diff': diff}
@@ -134,6 +137,8 @@ def execute(run_id):
                 continue
             changes.append({'id': rid, 'kind': kind, 'before': old.get(rid), 'after': new.get(rid)})
         diff = '\n'.join(difflib.unified_diff(source['before'].splitlines(), source['after'].splitlines(), fromfile='before/' + source['filename'], tofile='after/' + source['filename'], lineterm=''))
+        with lock:
+            run['rule_proposals'] = rule_store.proposals(RULE_ROOT, run, changes)
         step(2, {'changes': changes, 'diff': diff, 'code_changed': source['before'] != source['after']})
         explanation = f'{len(changes)} baseline rule change(s) detected. Review the source diff and validate behavior with tests. Pattern matching is not semantic proof.'
         mode = 'deterministic'
@@ -150,7 +155,7 @@ def execute(run_id):
         step(3, {'explanation': explanation, 'mode': mode, 'warning': warning, 'provider': os.getenv('LLM_PROVIDER', 'ollama') if source['use_ai'] else None, 'context': context_metadata})
         run['status'] = 'awaiting_review'
         run['nodes'][4]['status'] = 'awaiting_review'
-        run['nodes'][4]['output'] = 'Review the evidence before recording a POC decision.'
+        run['nodes'][4]['output'] = {'message': 'Select individual rule changes and review their Markdown before saving.', 'proposals': run['rule_proposals']}
         event(run, 4, 'awaiting_review', 'Waiting for your approval or rejection')
         save(run)
     except Exception as exc:
@@ -224,6 +229,19 @@ def decide(run_id: str, decision: Decision):
         if run['status'] != 'awaiting_review':
             raise HTTPException(409, 'This run is not awaiting review')
         record = {**decision.model_dump(), 'recorded_at': datetime.now(timezone.utc).isoformat()}
+        rollback = lambda: None
+        try:
+            if decision.decision == 'rejected' and decision.selected_rule_ids:
+                raise ValueError('Rejection cannot save selected rules.')
+            saved_files, rollback = rule_store.apply(RULE_ROOT, run, decision.selected_rule_ids, record) if decision.decision == 'approved' else ([], rollback)
+        except FileExistsError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(503, 'Rule files could not be saved. Check rules folder permissions; decision remains pending.') from exc
+        record['saved_files'] = saved_files
+        record['rule_versions'] = {rid: rule_store.digest(rule_store.read(RULE_ROOT / p['target'])) for rid in decision.selected_rule_ids for p in run.get('rule_proposals', []) if p['id'] == rid}
         run['decision'] = record
         run['status'] = decision.decision
         run['nodes'][4].update(status='completed', output=record)
@@ -231,7 +249,11 @@ def decide(run_id: str, decision: Decision):
         event(run, 4, 'completed', 'Review decision: ' + decision.decision)
         event(run, 5, 'running', 'Saving decision')
         event(run, 5, 'completed', 'Decision saved')
-        save(run)
+        try:
+            save(run)
+        except Exception:
+            rollback()
+            raise
     return run
 
 

@@ -5,6 +5,9 @@ import pytest
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(main, 'DB', tmp_path / 'runs.db')
+    import shutil
+    shutil.copytree(main.ROOT / 'rules', tmp_path / 'rules')
+    monkeypatch.setattr(main, 'RULE_ROOT', tmp_path / 'rules')
     return TestClient(main.app)
 
 def run(client, sample):
@@ -90,3 +93,79 @@ def test_execution_events_preserve_fast_transitions(client):
 def test_api_responses_are_not_cached(client):
     response=client.get('/api/health')
     assert response.headers['cache-control']=='no-store'
+
+def approve(client, result, ids, decision='approved'):
+    return client.post('/api/runs/'+result['id']+'/decision',json={'decision':decision,'reviewer':'Business owner','comments':'Verified evidence and boundary tests','selected_rule_ids':ids})
+
+def test_selected_rule_saved_and_version_archived(client):
+    result=run(client,client.get('/api/samples').json()[2])
+    assert result['rule_proposals'][0]['action']=='create'
+    response=approve(client,result,['TERM-REMOVAL'])
+    assert response.status_code==200
+    path=main.RULE_ROOT/'approved/TERM-REMOVAL.md'
+    assert 'INT = 7' in path.read_text()
+    assert result['id'] in path.read_text()
+    assert response.json()['decision']['saved_files']==['rules/approved/TERM-REMOVAL.md']
+    previous=path.read_text()
+    sample=client.get('/api/samples').json()[2]
+    sample['before']=sample['after']
+    sample['after']=sample['after'].replace('INT = 7','INT = 6')
+    result2=run(client,sample)
+    assert approve(client,result2,['TERM-REMOVAL']).status_code==200
+    assert (main.RULE_ROOT/f'archived/{result2["id"]}/TERM-REMOVAL.previous.md').read_text()==previous
+    assert 'INT = 6' in path.read_text()
+
+def test_removal_requires_explicit_selection_and_archives(client):
+    result=run(client,client.get('/api/samples').json()[0])
+    path=main.RULE_ROOT/'approved/PAY-001.md'
+    original=path.read_text()
+    assert approve(client,result,[]).status_code==200
+    assert path.read_text()==original
+    result=run(client,client.get('/api/samples').json()[0])
+    assert approve(client,result,['PAY-001'],'rejected').status_code==422
+    assert approve(client,result,['PAY-001']).status_code==200
+    assert not path.exists()
+    archive=main.RULE_ROOT/f'archived/{result["id"]}'
+    assert (archive/'PAY-001.previous.md').read_text()==original
+    assert 'status: retired' in (archive/'PAY-001.retired.md').read_text()
+
+def test_stale_unknown_rejected_and_write_failure(client, monkeypatch):
+    result=run(client,client.get('/api/samples').json()[2])
+    assert approve(client,result,['UNKNOWN']).status_code==422
+    assert approve(client,result,[],'rejected').status_code==200
+    assert not (main.RULE_ROOT/'approved/TERM-REMOVAL.md').exists()
+    result=run(client,client.get('/api/samples').json()[2])
+    path=main.RULE_ROOT/'approved/TERM-REMOVAL.md'
+    path.write_text('Other reviewer updated this rule')
+    assert approve(client,result,['TERM-REMOVAL']).status_code==409
+    assert path.read_text()=='Other reviewer updated this rule'
+    path.unlink()
+    result=run(client,client.get('/api/samples').json()[2])
+    original=main.rule_store.atomic_write
+    def fail(path,content):
+        if path.name=='TERM-REMOVAL.md': raise PermissionError('read-only folder')
+        return original(path,content)
+    monkeypatch.setattr(main.rule_store,'atomic_write',fail)
+    assert approve(client,result,['TERM-REMOVAL']).status_code==503
+    assert client.get('/api/runs/'+result['id']).json()['status']=='awaiting_review'
+    assert not path.exists()
+
+def test_selective_approval_does_not_save_other_proposals(client):
+    sample=client.get('/api/samples').json()[0]
+    sample['after']=sample['before']
+    sample['before']='// Original empty implementation'
+    result=run(client,sample)
+    assert len(result['rule_proposals'])==2
+    existing=(main.RULE_ROOT/'approved/PAY-001.md').read_text()
+    assert approve(client,result,['PAY-002']).status_code==200
+    assert (main.RULE_ROOT/'approved/PAY-002.md').exists()
+    assert (main.RULE_ROOT/'approved/PAY-001.md').read_text()==existing
+
+def test_db_failure_restores_rule_files(client,monkeypatch):
+    result=run(client,client.get('/api/samples').json()[2])
+    def fail(_): raise RuntimeError('database unavailable')
+    monkeypatch.setattr(main,'save',fail)
+    with pytest.raises(RuntimeError,match='database unavailable'):
+        approve(client,result,['TERM-REMOVAL'])
+    assert not (main.RULE_ROOT/'approved/TERM-REMOVAL.md').exists()
+    assert main.get(result['id'])['status']=='awaiting_review'

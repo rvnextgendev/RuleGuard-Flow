@@ -5,7 +5,7 @@ services:
     env_file: .env
     environment:
       OLLAMA_URL: http://ollama:11434
-    volumes: ["flow_data:/workspace/data", "./rules:/workspace/rules:ro"]
+    volumes: ["flow_data:/workspace/data", "./rules:/workspace/rules"]
   classic:
     build: .
     command: streamlit run app/ui.py --server.address=0.0.0.0

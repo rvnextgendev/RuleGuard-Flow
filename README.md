@@ -48,7 +48,7 @@ Copied from source commit `b6a4d4176392a427848bdec4b42f3290980b6f8d`:
 - `app/ui.py`: original Streamlit discovery, rule management and developer review screens.
 - `app/approval.py`, `install-hook.py`, samples, approved baseline, and GitHub business approval workflow.
 
-The visual API imports the inherited patterns, analyzes submitted text without modifying sample files, and saves each run in SQLite. Visual decisions do not promote Markdown drafts or approve GitHub deployments. Use Classic Streamlit for the inherited draft approval flow. Container data for Flow lives in a named volume; classic drafts/approvals live under the mounted `rules` folder.
+The visual API imports the inherited patterns, analyzes submitted text without modifying sample files, and saves each run in SQLite. Flow can now save explicitly selected baseline rule proposals to Markdown after preview. It does not promote AI drafts or approve GitHub deployments. Use Classic Streamlit for the inherited AI draft approval flow. Container data for Flow lives in a named volume; classic drafts/approvals live under the mounted `rules` folder.
 
 ## Local development / debugging
 
@@ -130,8 +130,29 @@ GROQ_MODEL=llama-3.3-70b-versatile
 5. Check **Ask configured LLM (groq)**, then click **Run analysis**.
 6. Click **Explain Impact**. Success shows `mode: llm-advisory`, `provider: groq`, the explanation and context size metadata. `mode: deterministic` plus a warning means the LLM call failed; deterministic output is not a Groq response. Check your key, model access, provider quota, and server logs/configuration.
 
-The prompt includes original and changed code (up to 12,000 characters each), business context (6,000), approved Markdown rules (8,000), detected changes (6,000), and diff (8,000). Smaller files are included completely. Oversized sections have explicit truncation metadata. Rules are read from `rules/approved` at execution time; Docker Flow mounts that folder read-only. No retrieval of other repository files or external documents occurs. Groq receives the included content when enabled. Keys stay in server environment configuration and are never returned by the config API.
+The prompt includes original and changed code (up to 12,000 characters each), business context (6,000), approved Markdown rules (8,000), detected changes (6,000), and diff (8,000). Smaller files are included completely. Oversized sections have explicit truncation metadata. Rules are read from `rules/approved` at execution time; Docker Flow mounts that folder writable so selected approvals persist locally. No retrieval of other repository files or external documents occurs. Groq receives the included content when enabled. Keys stay in server environment configuration and are never returned by the config API.
 
 ### Visible workflow execution
 
 Run Analysis now highlights each running node, colors completed connections, automatically selects the current node, and shows a timestamped execution log. Business Review pauses until a decision is recorded. History shows the saved event log. Fast backend steps are presented from recorded events; displayed timestamps reflect actual server execution, not animation time.
+
+
+## Save approved rules from Flow (UI 1.3)
+
+1. Run a fresh analysis. Older runs have no saved rule proposals; re-run them to generate previews.
+2. At Business Review, inspect **Rule file changes**, expand the proposed Markdown and current approved version, and select the individual changes to save. Nothing is preselected.
+3. Enter reviewer and comments. Click **Approve & save selected rules**.
+4. Click **Save Decision** to see `saved_files` and content hashes.
+
+For the 8 → 7 day sample, select `TERM-REMOVAL` and open `rules/approved/TERM-REMOVAL.md` in your local checkout after approving. It records the explicit assignment as evidence; the pattern does not establish the full business requirement.
+
+- New/modified selected rules create or update `rules/approved/<id>.md`.
+- Previous versions are preserved under `rules/archived/<run-id>/<id>.previous.md`.
+- Selected removals create `<id>.retired.md` in that archive folder and remove the active approved file. Retiring a rule intentionally removes it from baseline enforcement.
+- Unselected rules and rejected proposals do not change files. **Approve review only** explicitly records a decision without saving rules.
+- A rule changed since proposal generation returns a conflict; run analysis again and review the new proposal.
+- Save failures leave the decision pending; handled write/DB failures restore prior files.
+
+Markdown includes reviewer, comments, timestamp, source evidence, run ID and previous content hash. SQLite retains the decision, selected IDs, saved paths and new hashes. The Docker bind mount is writable; files survive container replacement. No GitHub commit/PR is created automatically. Commit approved/archived files yourself to share them.
+
+This remains a single-worker local POC. The in-process lock coordinates Flow decisions, not external editors or Classic Streamlit. Avoid simultaneous manual/Classic writes during approval. File and SQLite updates are not a crash-atomic distributed transaction; abrupt process/machine failure during a save needs inspection of the saved files and run history. New rule IDs are documented but only the inherited PAY patterns are enforced by the existing Git guard.
