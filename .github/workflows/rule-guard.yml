@@ -12,14 +12,24 @@ jobs:
       needs_approval: ${{ steps.check.outputs.needs_approval }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Evaluate approved business rules
         id: check
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          PYTHONPATH=app python -m approval ruleguard-report.json
+          if [ "$EVENT_NAME" = pull_request ]; then
+            PYTHONPATH=app python -m approval ruleguard-report.json --base "$PR_BASE_SHA" --head "$PR_HEAD_SHA"
+          else
+            PYTHONPATH=app python -m approval ruleguard-report.json
+          fi
           echo "needs_approval=$(python -c 'import json; print(str(json.load(open("ruleguard-report.json"))["review_required"]).lower())')" >> "$GITHUB_OUTPUT"
           cat ruleguard-report.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

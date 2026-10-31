@@ -169,3 +169,11 @@ The existing 12,000-character limit per source remains. Larger files show a part
 ### Demo PR causes Flow unit-test failures
 
 Flow's built-in scenarios are defined in `backend/demo_samples.py`. They intentionally do not read the mutable `samples/PaymentService.cs` or `samples/CapturePayment.sql` files. Those repository files remain inputs for the GitHub/pre-commit business guard, so deleting the payment validation during a PR demo still flags PAY-001 and requires configured environment approval. The UI's original/changed scenario pair and its tests remain repeatable while the demo branch changes the guard samples.
+
+### Business approval for approved-rule edits on a PR
+
+The `RuleGuard Business Approval` PR workflow compares the PR base SHA with its head SHA. Any added, modified, deleted, or moved file under `rules/approved/` sets `review_required=true`, independently of source-pattern violations. The report includes changed rule paths and approval reasons. Failure to resolve the diff fails detection and the merge gate rather than silently skipping review. A branch push alone does not trigger this workflow; open/update a PR targeting `main`.
+
+Configure GitHub Settings → Environments → `business-rule-exception` → Required reviewers. Without required reviewers, the environment job can run immediately and will not wait. Also make `merge-gate` a required status check for `main` in branch protection/rulesets. These repository settings are separate from the YAML. Environment/reviewer availability depends on repository visibility and the GitHub plan. Updating approved Markdown locally in Flow does not constitute GitHub environment approval.
+
+To test, bring the new workflow into your branch, edit `rules/approved/PAY-001.md`, commit/push, and open a PR to `main`. Inspect `detect` for `approved_rule_changes`, then look for the waiting `owner-approval` job / Review deployments control. A reviewer must approve that run before the required merge gate succeeds.
