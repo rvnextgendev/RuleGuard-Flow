@@ -100,12 +100,19 @@ def llm_context(source, changes, diff):
     return prompt, metadata
 
 
+def event(run, index, status, message):
+    run.setdefault('events', []).append({'node': index, 'status': status,
+        'message': message, 'timestamp': datetime.now(timezone.utc).isoformat()})
+
+
 def execute(run_id):
     run = get(run_id)
     def step(index, output):
         run['nodes'][index].update(status='completed', output=output, finished_at=datetime.now(timezone.utc).isoformat())
+        event(run, index, 'completed', STEPS[index] + ' completed')
         if index + 1 < 4:
             run['nodes'][index + 1]['status'] = 'running'
+            event(run, index + 1, 'running', ['Reading submitted source', 'Finding baseline rules and source evidence', 'Comparing original and changed rules', 'Calling configured LLM' if run['input']['use_ai'] else 'Generating deterministic impact summary'][index + 1])
         save(run)
     try:
         source = run['input']
@@ -144,12 +151,14 @@ def execute(run_id):
         run['status'] = 'awaiting_review'
         run['nodes'][4]['status'] = 'awaiting_review'
         run['nodes'][4]['output'] = 'Review the evidence before recording a POC decision.'
+        event(run, 4, 'awaiting_review', 'Waiting for your approval or rejection')
         save(run)
     except Exception as exc:
         run['status'] = 'failed'
         for node in run['nodes']:
             if node['status'] == 'running':
                 node.update(status='failed', output=f'Execution failed: {type(exc).__name__}')
+                event(run, node['id'], 'failed', node['output'])
         save(run)
 
 
@@ -180,6 +189,7 @@ def start(data: RunInput, tasks: BackgroundTasks):
         raise HTTPException(422, 'Use a .cs or .sql filename')
     run = dict(id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc).isoformat(), status='running', input=data.model_dump(),
                nodes=[dict(id=i, name=name, status='running' if i == 0 else 'pending', output=None) for i, name in enumerate(STEPS)])
+    event(run, 0, 'running', 'Reading submitted original and changed code')
     save(run)
     tasks.add_task(execute, run['id'])
     return run
@@ -210,6 +220,9 @@ def decide(run_id: str, decision: Decision):
         run['status'] = decision.decision
         run['nodes'][4].update(status='completed', output=record)
         run['nodes'][5].update(status='completed', output=record)
+        event(run, 4, 'completed', 'Review decision: ' + decision.decision)
+        event(run, 5, 'running', 'Saving decision')
+        event(run, 5, 'completed', 'Decision saved')
         save(run)
     return run
 

@@ -78,3 +78,11 @@ def test_context_limits_and_safe_config(client, monkeypatch):
     config=client.get('/api/llm-config')
     assert config.json()['groq_key_configured']
     assert 'secret-test-value' not in config.text
+
+def test_execution_events_preserve_fast_transitions(client):
+    result=run(client,client.get('/api/samples').json()[0])
+    events=result['events']
+    assert [(e['node'],e['status']) for e in events]==[(0,'running'),(0,'completed'),(1,'running'),(1,'completed'),(2,'running'),(2,'completed'),(3,'running'),(3,'completed'),(4,'awaiting_review')]
+    assert all(e['timestamp'] and e['message'] for e in events)
+    decided=client.post('/api/runs/'+result['id']+'/decision',json={'decision':'approved','reviewer':'Owner','comments':'Reviewed'}).json()
+    assert decided['events'][-1]['message']=='Decision saved'

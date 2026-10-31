@@ -33,7 +33,7 @@ Then enable **Ask configured LLM** in the visual interface. The first model down
 1. Select **Payment validation removed** or **Removal period: 8 to 7 days**.
 2. Open **Edit / upload code** to inspect or replace original and changed C#/SQL. An empty changed input represents removal of all source content.
 3. Click **Run analysis**. The backend executes Load Code → Extract Rules → Compare Rules → Explain Impact → Business Review → Save Decision.
-4. Click each node to inspect its actual output. Fast deterministic runs may complete between polling intervals; the UI does not add artificial delays.
+4. Click each node to inspect its actual output. The backend records every node transition. The UI presents those real events in order at 650 ms intervals so fast steps remain visible; this presentation does not slow backend execution. Groq/LLM steps remain running while awaiting the provider.
 5. Read Compare Rules for added/removed/modified baseline evidence and the full unified source diff.
 6. Enter a reviewer name and meaningful comments, then approve or reject.
 7. Open **Execution history** to revisit the stored evidence and decision.
@@ -131,3 +131,7 @@ GROQ_MODEL=llama-3.3-70b-versatile
 6. Click **Explain Impact**. Success shows `mode: llm-advisory`, `provider: groq`, the explanation and context size metadata. `mode: deterministic` plus a warning means the LLM call failed; deterministic output is not a Groq response. Check your key, model access, provider quota, and server logs/configuration.
 
 The prompt includes original and changed code (up to 12,000 characters each), business context (6,000), approved Markdown rules (8,000), detected changes (6,000), and diff (8,000). Smaller files are included completely. Oversized sections have explicit truncation metadata. Rules are read from `rules/approved` at execution time; Docker Flow mounts that folder read-only. No retrieval of other repository files or external documents occurs. Groq receives the included content when enabled. Keys stay in server environment configuration and are never returned by the config API.
+
+### Visible workflow execution
+
+Run Analysis now highlights each running node, colors completed connections, automatically selects the current node, and shows a timestamped execution log. Business Review pauses until a decision is recorded. History shows the saved event log. Fast backend steps are presented from recorded events; displayed timestamps reflect actual server execution, not animation time.
