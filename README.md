@@ -113,3 +113,21 @@ Pattern coverage is limited to four inherited payment rules plus an explicit rem
 Run records persist across restarts, but in-flight background execution does not resume after a process crash. Start a new run after an interruption. Use one API worker for this POC. Simultaneous decisions within that worker are guarded; a decision cannot be overwritten. A failed LLM call retains deterministic results with a visible warning. Real model connectivity requires a running provider and was not assumed by the offline tests.
 
 Future extensions: durable job queue, authenticated reviewer identities, GitHub PR ingestion and commit-bound decisions, richer language parsers, configurable nodes, and streaming status updates.
+
+## Test enriched context with Groq
+
+1. Pull the latest `main`.
+2. Edit `.env` (copy `.env.example` only if `.env` does not exist):
+
+```env
+LLM_PROVIDER=groq
+GROQ_API_KEY=your_actual_key_here
+GROQ_MODEL=llama-3.3-70b-versatile
+```
+
+3. Run `docker compose up -d --build --force-recreate` and open http://localhost:8000.
+4. Select **Removal period: 8 to 7 days**. In **Business context**, enter: `The removal period changes from eight to seven days after term start. Identify the changed behavior and recommend boundary tests.`
+5. Check **Ask configured LLM (groq)**, then click **Run analysis**.
+6. Click **Explain Impact**. Success shows `mode: llm-advisory`, `provider: groq`, the explanation and context size metadata. `mode: deterministic` plus a warning means the LLM call failed; deterministic output is not a Groq response. Check your key, model access, provider quota, and server logs/configuration.
+
+The prompt includes original and changed code (up to 12,000 characters each), business context (6,000), approved Markdown rules (8,000), detected changes (6,000), and diff (8,000). Smaller files are included completely. Oversized sections have explicit truncation metadata. Rules are read from `rules/approved` at execution time; Docker Flow mounts that folder read-only. No retrieval of other repository files or external documents occurs. Groq receives the included content when enabled. Keys stay in server environment configuration and are never returned by the config API.

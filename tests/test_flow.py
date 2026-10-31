@@ -50,3 +50,31 @@ def test_ai_failure_retains_results(client, monkeypatch):
     result=client.get('/api/runs/'+response.json()['id']).json()
     assert result['status']=='awaiting_review'
     assert result['nodes'][3]['output']['warning']
+
+def test_llm_receives_full_context(client, monkeypatch):
+    import sys, types
+    prompts=[]
+    module=types.ModuleType('llm')
+    module.explain=lambda prompt: prompts.append(prompt) or 'Advisory explanation'
+    monkeypatch.setitem(sys.modules,'llm',module)
+    sample=client.get('/api/samples').json()[2]
+    response=client.post('/api/runs',json={**{k:sample[k] for k in ('filename','before','after')},'use_ai':True,'business_context':'Removal must occur seven days after term start.'})
+    result=client.get('/api/runs/'+response.json()['id']).json()
+    import json
+    context=json.loads(prompts[0].split('\n',1)[1])
+    assert context['before']==sample['before']
+    assert context['after']==sample['after']
+    assert 'seven days' in context['business_context']
+    assert 'PAY-001' in context['approved_rules']
+    assert result['nodes'][3]['output']['mode']=='llm-advisory'
+    assert not result['nodes'][3]['output']['context']['before']['truncated']
+
+def test_context_limits_and_safe_config(client, monkeypatch):
+    _,metadata=main.llm_context({'filename':'x.sql','before':'x'*13000,'after':'','business_context':''}, [], '')
+    assert metadata['before']['truncated']
+    assert metadata['before']['sent_chars']==12000
+    monkeypatch.setenv('GROQ_API_KEY','secret-test-value')
+    monkeypatch.setenv('LLM_PROVIDER','groq')
+    config=client.get('/api/llm-config')
+    assert config.json()['groq_key_configured']
+    assert 'secret-test-value' not in config.text
