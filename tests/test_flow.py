@@ -86,3 +86,7 @@ def test_execution_events_preserve_fast_transitions(client):
     assert all(e['timestamp'] and e['message'] for e in events)
     decided=client.post('/api/runs/'+result['id']+'/decision',json={'decision':'approved','reviewer':'Owner','comments':'Reviewed'}).json()
     assert decided['events'][-1]['message']=='Decision saved'
+
+def test_api_responses_are_not_cached(client):
+    response=client.get('/api/health')
+    assert response.headers['cache-control']=='no-store'
