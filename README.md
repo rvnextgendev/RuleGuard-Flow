@@ -165,3 +165,7 @@ Upload the original file on the left and its changed version on the right. The i
 The **Source comparison** panel shows before/after evidence and source line numbers for accepted advisory findings. The server rejects findings with missing, invented, unchanged, or incorrectly paired evidence. Evidence matching cannot establish semantic correctness: manually review the interpretations. Invalid JSON, provider failures or rate limits produce a visible warning and preserve the baseline results and text diff. No live provider success is implied by fallback output.
 
 The existing 12,000-character limit per source remains. Larger files show a partial-comparison warning; split a large procedure or review the full text diff. The raw text diff always compares all submitted text. LLM findings are advisory and do not generate approved Markdown proposals; only the existing baseline proposals support file approval in this version. Generic AI-to-rule promotion remains a separate extension.
+
+### Demo PR causes Flow unit-test failures
+
+Flow's built-in scenarios are defined in `backend/demo_samples.py`. They intentionally do not read the mutable `samples/PaymentService.cs` or `samples/CapturePayment.sql` files. Those repository files remain inputs for the GitHub/pre-commit business guard, so deleting the payment validation during a PR demo still flags PAY-001 and requires configured environment approval. The UI's original/changed scenario pair and its tests remain repeatable while the demo branch changes the guard samples.

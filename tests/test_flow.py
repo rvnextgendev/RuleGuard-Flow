@@ -210,3 +210,24 @@ def test_invalid_llm_response_is_not_reported_as_success(client,monkeypatch):
     result=client.get('/api/runs/'+response.json()['id']).json()
     assert result['nodes'][2]['output']['warning']
     assert result['nodes'][2]['output']['ai_comparison_status']=='deterministic'
+
+def test_builtin_scenarios_independent_of_editable_pr_samples(client, tmp_path, monkeypatch):
+    # Reproduce the demo PR: remove PAY-001 from the editable source.
+    checkout=tmp_path/'checkout'
+    sample_dir=checkout/'samples'
+    sample_dir.mkdir(parents=True)
+    (sample_dir/'PaymentService.cs').write_text('public class PaymentService {}')
+    (sample_dir/'CapturePayment.sql').write_text('-- editable SQL guard removed')
+    monkeypatch.setattr(main,'ROOT',checkout)
+    samples=client.get('/api/samples').json()
+    assert 'amount <= 0' in samples[0]['before']
+    assert 'amount <= 0' not in samples[0]['after']
+    result=run(client,samples[0])
+    assert any(c['id']=='PAY-001' and c['kind']=='removed' for c in result['nodes'][2]['output']['changes'])
+    result=run(client,samples[1])
+    assert any(c['id']=='PAY-003' and c['kind']=='removed' for c in result['nodes'][2]['output']['changes'])
+    # The approval guard continues checking the editable file, not UI constants.
+    from approval import findings
+    import shutil
+    shutil.copytree(main.RULE_ROOT/'approved',checkout/'rules/approved')
+    assert any(item['id']=='PAY-001' for item in findings(checkout))

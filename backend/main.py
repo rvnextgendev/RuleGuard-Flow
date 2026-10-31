@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / 'app'))
 load_dotenv(ROOT / '.env')
 from engine import RULES
 from backend import rule_store, ai_compare
+from backend.demo_samples import PAYMENT_BEFORE, SQL_BEFORE
 
 app = FastAPI(title='RuleGuard Flow', version='1.0.0')
 DB = Path(os.getenv('FLOW_DB', str(ROOT / 'data/flow.sqlite3')))
@@ -198,8 +199,8 @@ def llm_config():
 
 @app.get('/api/samples')
 def samples():
-    payment = (ROOT / 'samples/PaymentService.cs').read_text()
-    sql = (ROOT / 'samples/CapturePayment.sql').read_text()
+    payment = PAYMENT_BEFORE
+    sql = SQL_BEFORE
     term = 'DECLARE @GroupRemovalDaysAfterTermStart INT = 8;\nSELECT * FROM EnrollmentTerm ET\nWHERE DATEDIFF(DAY, ET.TermStartDate, @ProcessDate) = @GroupRemovalDaysAfterTermStart;'
     return [dict(name='Payment validation removed', filename='PaymentService.cs', before=payment, after=re.sub(r'^.*amount\s*<=\s*0.*\n?', '', payment, flags=re.M)),
             dict(name='SQL duplicate guard removed', filename='CapturePayment.sql', before=sql, after='-- Proposed replacement: review missing guards\nINSERT INTO Payments(Amount, IdempotencyKey) VALUES (@Amount, @IdempotencyKey);'),
